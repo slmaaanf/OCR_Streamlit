@@ -1,0 +1,10 @@
+flask~=3.1.1
+gunicorn
+opencv-python-headless
+numpy~=2.2.6
+scikit-image~=0.25.2
+python-dateutil~=2.9.0.post0
+pytesseract~=0.3.13
+Pillow
+werkzeug~=3.1.3
+streamlit
