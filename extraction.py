@@ -1,3 +1,4 @@
+import platform
 import re
 import cv2
 import numpy as np
@@ -6,14 +7,13 @@ from dateutil import parser
 from datetime import datetime
 
 # --- Konfigurasi PyTesseract (PENTING!) ---
-# Sesuaikan path ini dengan lokasi tesseract.exe di sistem Anda.
-# Contoh (Windows):
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
-
-# Contoh (Linux/macOS jika tidak di PATH):
-# pytesseract.pytesseract.tesseract_cmd = '/usr/local/bin/tesseract'
-# ----------------------------------------
+if platform.system() == "Windows":
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+else: # Asumsi Linux di Streamlit Cloud
+    # Coba path default Tesseract di Linux, atau biarkan kosong jika sudah di PATH sistem
+    # Anda bisa mencoba '/usr/bin/tesseract' atau '/usr/local/bin/tesseract'
+    # Atau bahkan menghapus baris ini seluruhnya jika tesseract.exe sudah di PATH default di cloud
+    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
 # --- 1. Fungsi Normalisasi Dasar ---
 def normalize_price(price):
