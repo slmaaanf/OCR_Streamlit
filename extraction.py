@@ -10,9 +10,6 @@ from datetime import datetime
 if platform.system() == "Windows":
     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 else: # Asumsi Linux di Streamlit Cloud
-    # Coba path default Tesseract di Linux, atau biarkan kosong jika sudah di PATH sistem
-    # Anda bisa mencoba '/usr/bin/tesseract' atau '/usr/local/bin/tesseract'
-    # Atau bahkan menghapus baris ini seluruhnya jika tesseract.exe sudah di PATH default di cloud
     pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
 # --- 1. Fungsi Normalisasi Dasar ---
@@ -262,11 +259,6 @@ def extract_merchant_name(text: str) -> str | None:
 
     return best_merchant_name
 
-
-# extraction.py
-
-# ... (pastikan extract_date dan extract_merchant_name sudah yang terbaru dan terurut dengan benar) ...
-
 def extract_total(text):
     """
     Cari baris yang mengandung 'total' lalu ambil angka di kanannya.
@@ -344,10 +336,6 @@ def extract_subtotal(text):
                         return potential_subtotal
     return None
 
-
-# ... (extract_tax, extract_entities_rule_based, preprocess_pipeline, process_receipt_image) ...
-
-
 def extract_tax(text):
     """
     Cari tax/ppn/pajak/service charge/vat/gst/levy pada struk.
@@ -371,11 +359,6 @@ def extract_tax(text):
                 if potential_tax is not None and potential_tax > 0:
                     return potential_tax
     return None
-
-
-# extraction.py
-
-# ... (pastikan semua import dan fungsi normalize_price, normalize_merchant_name, normalize_item_name sudah yang terbaru dan terurut dengan benar) ...
 
 def extract_items(text):
     """
@@ -592,26 +575,51 @@ def preprocess_pipeline(image_path):
     # 2. Konversi ke grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # 3. Denoise (Fast Nl Means Denoising - lebih efektif untuk noise acak)
-    denoised = cv2.fastNlMeansDenoising(gray, h=15, templateWindowSize=7, searchWindowSize=21)
+    # --- Bagian yang akan kita eksperimenkan ---
+
+    # 3. Denoise (Fast Nl Means Denoising - h: filter strength)
+    # Coba berbagai nilai h: 10, 15, 20, 25.
+    # Terkadang h yang terlalu tinggi bisa menghilangkan detail teks.
+    denoised = cv2.fastNlMeansDenoising(gray, h=10, templateWindowSize=7, searchWindowSize=21) # <--- Coba h=10 (lebih halus)
 
     # 4. Adaptive Thresholding - Binarisasi gambar
+    # blockSize: harus ganjil. C: konstanta yang dikurangi dari mean.
+    # Coba kombinasi (blockSize, C) yang berbeda:
+    # (15, 8), (17, 10), (21, 10), (25, 12), (29, 15)
     thresh = cv2.adaptiveThreshold(
         denoised, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY,
-        21,  # blockSize
-        10  # C
+        15,  # <--- Coba blockSize=15 (lebih kecil untuk detail)
+        8    # <--- Coba C=8 (membuat teks lebih tebal)
     )
 
-    # 5. Optional: Inverse (if text is white on dark background)
-    thresh = cv2.bitwise_not(thresh)
+    # 5. Optional: Inverse (jika teks putih di latar belakang gelap)
+    # Ini sangat penting! Jika gambar asli adalah teks gelap di latar terang,
+    # dan Anda meng-invert-nya menjadi teks putih di latar gelap, Tesseract mungkin kesulitan.
+    # KESALAHAN UMUM: Meng-invert gambar yang TIDAK perlu di-invert.
+    # Coba komentar baris ini untuk gambar yang teksnya hitam di latar putih.
+    # Jika gambar yang Anda uji memiliki teks hitam di latar belakang putih (seperti kebanyakan struk),
+    # maka baris ini mungkin MERUSAK OCR.
+    # thresh = cv2.bitwise_not(thresh) # <--- COBA KOMENTARI BARIS INI!
 
-    # 6. Morphological Operations (to clean text)
-    kernel_morph = np.ones((2, 2), np.uint8)
-    cleaned_morph = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_morph)
+    # 6. Morphological Operations (untuk membersihkan teks)
+    # Kernel (2,2) mungkin terlalu agresif atau terlalu halus.
+    # Coba (1,1) untuk operasi paling halus, atau (3,3) jika teks sangat tebal.
+    # Coba juga cv2.MORPH_CLOSE jika cv2.MORPH_OPEN menghilangkan terlalu banyak teks.
+    kernel_morph = np.ones((1, 1), np.uint8) # <--- Coba kernel (1,1)
+    # cleaned_morph = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_morph) # Biarkan OPEN
 
-    # 7. Deskew (correct skew)
+    # Jika ingin mencoba CLOSING (menutup celah di teks)
+    # cleaned_morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_morph)
+
+    # Jika ingin mencoba hanya dilate (mempertebal teks)
+    cleaned_morph = cv2.dilate(thresh, kernel_morph, iterations=1) # <--- Coba ini sebagai ganti morphEx
+
+    # --- Akhir Bagian Eksperimen ---
+
+
+    # 7. Deskew (perbaiki kemiringan)
     coords = np.column_stack(np.where(cleaned_morph > 0))
     if coords.shape[0] > 0:
         angle = cv2.minAreaRect(coords)[-1]
