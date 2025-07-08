@@ -10,7 +10,12 @@ from datetime import datetime
 if platform.system() == "Windows":
     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 else: # Asumsi Linux di Streamlit Cloud
+    # Ini adalah path umum di Ubuntu/Debian yang digunakan Streamlit Cloud
     pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+    # Jika '/usr/bin/tesseract' tidak berfungsi di Cloud, coba komentari baris di atas ini
+    # untuk membiarkan pytesseract menemukannya di PATH default sistem Cloud
+    # atau coba '/usr/local/bin/tesseract'
+# ----------------------------------------
 
 # --- 1. Fungsi Normalisasi Dasar ---
 def normalize_price(price):
@@ -133,7 +138,7 @@ def extract_date(text):
     date_patterns = [
         r'(\d{2}/\d{2}/\d{4})\s+\d{2}:\d{2}',  # MM/DD/YYYY HH:MM (for 8.jpg, Costco)
         r'(\d{2}/\d{2}/\d{2})\s+\d{2}:\d{2}',  # MM/DD/YY HH:MM (for 0.jpg, Walmart)
-        r'(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})',  # YYYY-MM-DD/MM/DD
+        r'(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})',  #InBackground-MM-DD/MM/DD
         r'(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})',  # DD/MM/YYYY or MM/DD/YYYY
         r'(\d{1,2}\s+(?:Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)[a-z]*\s+\d{2,4})',
         r'(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|Mei|Jun|Jul|Agu|Sep|Okt|Nov|Des)[a-z]*\s+\d{2,4})',
@@ -382,7 +387,6 @@ def extract_items(text):
     item_section_lines = []
     in_item_section = False
 
-    # Tahap 1: Identifikasi Blok Item yang Potensial
     for line in lines:
         line_lower = line.lower()
         if not in_item_section and (any(kw in line_lower for kw in start_keywords) or re.search(r'^\s*\d+\s*[a-z]',
@@ -402,7 +406,6 @@ def extract_items(text):
                 continue
             item_section_lines.append(line)
 
-    # Tahap 2: Ekstraksi Item dari Blok yang Ditemukan (Mencoba beberapa pola)
     for line in item_section_lines:
         current_item = None
 
@@ -449,13 +452,13 @@ def extract_items(text):
                     }
         elif item_match_B:
             qty_str = item_match_B.group(1).replace('x', '').strip()
-            name_and_mid_num_part = item_match_B.group(2).strip()
+            name_part = item_match_B.group(2).strip()
             price_str = item_match_B.group(3)
 
             qty = int(qty_str) if qty_str.isdigit() else 1
             normalized_price = normalize_price(price_str)
 
-            cleaned_name_part = re.sub(r'\s*\d+(?:\.\d+)?\s*$', '', name_and_mid_num_part).strip()
+            cleaned_name_part = re.sub(r'\s*\d+(?:\.\d+)?\s*$', '', name_part).strip()
             cleaned_name_part = re.sub(r'[^A-Za-z0-9\s&\'\.]', '', cleaned_name_part).strip()
 
             normalized_name = normalize_item_name(cleaned_name_part)
@@ -577,44 +580,32 @@ def preprocess_pipeline(image_path):
 
     # --- Bagian yang akan kita eksperimenkan ---
 
-    # 3. Denoise (Fast Nl Means Denoising - h: filter strength)
-    # Coba berbagai nilai h: 10, 15, 20, 25.
-    # Terkadang h yang terlalu tinggi bisa menghilangkan detail teks.
-    denoised = cv2.fastNlMeansDenoising(gray, h=10, templateWindowSize=7, searchWindowSize=21) # <--- Coba h=10 (lebih halus)
+    # 3. Denoise
+    # Coba h=15 atau h=20. Jangan terlalu rendah.
+    denoised = cv2.fastNlMeansDenoising(gray, h=15, templateWindowSize=7,
+                                        searchWindowSize=21)  # <--- Ubah h=15 (atau 20)
 
     # 4. Adaptive Thresholding - Binarisasi gambar
-    # blockSize: harus ganjil. C: konstanta yang dikurangi dari mean.
-    # Coba kombinasi (blockSize, C) yang berbeda:
-    # (15, 8), (17, 10), (21, 10), (25, 12), (29, 15)
+    # Ini adalah parameter yang sering bekerja baik untuk teks gelap di latar terang.
     thresh = cv2.adaptiveThreshold(
         denoised, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY,
-        15,  # <--- Coba blockSize=15 (lebih kecil untuk detail)
-        8    # <--- Coba C=8 (membuat teks lebih tebal)
+        31,  # <--- Coba blockSize=31 (lebih besar, lebih adaptif untuk variasi cahaya)
+        10  # <--- C=10 (kontras standar)
     )
 
-    # 5. Optional: Inverse (jika teks putih di latar belakang gelap)
-    # Ini sangat penting! Jika gambar asli adalah teks gelap di latar terang,
-    # dan Anda meng-invert-nya menjadi teks putih di latar gelap, Tesseract mungkin kesulitan.
-    # KESALAHAN UMUM: Meng-invert gambar yang TIDAK perlu di-invert.
-    # Coba komentar baris ini untuk gambar yang teksnya hitam di latar putih.
-    # Jika gambar yang Anda uji memiliki teks hitam di latar belakang putih (seperti kebanyakan struk),
-    # maka baris ini mungkin MERUSAK OCR.
-    # thresh = cv2.bitwise_not(thresh) # <--- COBA KOMENTARI BARIS INI!
+    # 5. Optional: Inverse (pastikan ini tetap dikomentari jika teks asli hitam di latar putih)
+    # thresh = cv2.bitwise_not(thresh) # <--- PASTI DIKOMENTARI
 
-    # 6. Morphological Operations (untuk membersihkan teks)
-    # Kernel (2,2) mungkin terlalu agresif atau terlalu halus.
-    # Coba (1,1) untuk operasi paling halus, atau (3,3) jika teks sangat tebal.
-    # Coba juga cv2.MORPH_CLOSE jika cv2.MORPH_OPEN menghilangkan terlalu banyak teks.
-    kernel_morph = np.ones((1, 1), np.uint8) # <--- Coba kernel (1,1)
-    # cleaned_morph = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_morph) # Biarkan OPEN
+    # 6. Morphological Operations (Aktifkan Dilate/Opening yang efektif)
+    # Kernel (2,2) seringkali baik. Gunakan cv2.MORPH_OPEN
+    kernel_morph = np.ones((2, 2), np.uint8)  # <--- Ubah kernel (2,2)
+    cleaned_morph = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_morph)  # <--- Aktifkan MORPH_OPEN
 
-    # Jika ingin mencoba CLOSING (menutup celah di teks)
-    # cleaned_morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_morph)
-
-    # Jika ingin mencoba hanya dilate (mempertebal teks)
-    cleaned_morph = cv2.dilate(thresh, kernel_morph, iterations=1) # <--- Coba ini sebagai ganti morphEx
+    # Baris di bawah ini harus dikomentari atau dihapus jika MORPH_OPEN diaktifkan
+    # cleaned_morph = thresh # <-- Komentari atau hapus ini!
+    # cleaned_morph = cv2.dilate(thresh, kernel_morph, iterations=1) # <-- Komentari atau hapus ini!
 
     # --- Akhir Bagian Eksperimen ---
 
