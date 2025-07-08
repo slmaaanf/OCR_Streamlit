@@ -10,7 +10,6 @@ from datetime import datetime
 if platform.system() == "Windows":
     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 else: # Asumsi Linux di Streamlit Cloud
-    # Ini adalah path umum di Ubuntu/Debian yang digunakan Streamlit Cloud
     pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
     # Jika '/usr/bin/tesseract' tidak berfungsi di Cloud, coba komentari baris di atas ini
     # untuk membiarkan pytesseract menemukannya di PATH default sistem Cloud
@@ -568,7 +567,7 @@ def preprocess_pipeline(image_path):
 
     height, width = img.shape[:2]
 
-    # 1. Resize gambar (opsional, jika gambar terlalu besar/kecil)
+    # 1. Resize gambar (opsional) - Tetap 1000 lebar target
     target_width = 1000
     if width > target_width or width < target_width * 0.5:
         scale = target_width / width
@@ -578,36 +577,32 @@ def preprocess_pipeline(image_path):
     # 2. Konversi ke grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # --- Bagian yang akan kita eksperimenkan ---
-
-    # 3. Denoise
-    # Coba h=15 atau h=20. Jangan terlalu rendah.
-    denoised = cv2.fastNlMeansDenoising(gray, h=15, templateWindowSize=7,
-                                        searchWindowSize=21)  # <--- Ubah h=15 (atau 20)
+    # 3. Denoise (Fast Nl Means Denoising) - h=15 adalah titik awal yang baik
+    # Ini memberikan denoising yang moderat.
+    denoised = cv2.fastNlMeansDenoising(gray, h=15, templateWindowSize=7, searchWindowSize=21)
 
     # 4. Adaptive Thresholding - Binarisasi gambar
-    # Ini adalah parameter yang sering bekerja baik untuk teks gelap di latar terang.
+    # Parameter ini sangat penting. Kita akan gunakan set yang sebelumnya berhasil.
     thresh = cv2.adaptiveThreshold(
         denoised, 255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        31,  # <--- Coba blockSize=31 (lebih besar, lebih adaptif untuk variasi cahaya)
-        10  # <--- C=10 (kontras standar)
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,  # Gaussian_C seringkali lebih baik dari Mean_C
+        cv2.THRESH_BINARY,              # Tetap THRESH_BINARY
+        21,                             # <--- blockSize=21 (yang menghasilkan teks "P1sang Juara")
+        10                              # <--- C=10 (yang menghasilkan teks "P1sang Juara")
     )
 
-    # 5. Optional: Inverse (pastikan ini tetap dikomentari jika teks asli hitam di latar putih)
-    # thresh = cv2.bitwise_not(thresh) # <--- PASTI DIKOMENTARI
+    # 5. Optional: Inverse (jika teks putih di latar belakang gelap)
+    # PENTING: BARIS INI AKAN DIKEMBALIKAN AKTIF, KARENA INI YANG MENGHASILKAN TEKS "P1sang Juara" SEBELUMNYA.
+    thresh = cv2.bitwise_not(thresh) # <--- AKTIFKAN BARIS INI (uncomment)
 
-    # 6. Morphological Operations (Aktifkan Dilate/Opening yang efektif)
-    # Kernel (2,2) seringkali baik. Gunakan cv2.MORPH_OPEN
-    kernel_morph = np.ones((2, 2), np.uint8)  # <--- Ubah kernel (2,2)
-    cleaned_morph = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_morph)  # <--- Aktifkan MORPH_OPEN
+    # 6. Morphological Operations (untuk membersihkan teks)
+    # Kernel (2,2) dan MORPH_OPEN sebelumnya menghasilkan teks "P1sang Juara"
+    kernel_morph = np.ones((2, 2), np.uint8) # <--- Ubah kernel ke (2,2)
+    cleaned_morph = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_morph) # <--- Aktifkan MORPH_OPEN
 
-    # Baris di bawah ini harus dikomentari atau dihapus jika MORPH_OPEN diaktifkan
-    # cleaned_morph = thresh # <-- Komentari atau hapus ini!
-    # cleaned_morph = cv2.dilate(thresh, kernel_morph, iterations=1) # <-- Komentari atau hapus ini!
-
-    # --- Akhir Bagian Eksperimen ---
+    # Pastikan baris lain untuk cleaned_morph dikomentari/dihapus
+    # cleaned_morph = thresh
+    # cleaned_morph = cv2.dilate(thresh, kernel_morph, iterations=1)
 
 
     # 7. Deskew (perbaiki kemiringan)
@@ -625,9 +620,8 @@ def preprocess_pipeline(image_path):
     else:
         rotated = cleaned_morph
 
-    cv2.imwrite("preprocessed_output_debug.png", rotated)
+    cv2.imwrite("preprocessed_output_debug.png", rotated) # Pastikan ini tetap aktif untuk debugging lokal
     return rotated
-
 
 # --- 5. Fungsi Utama Pemrosesan Gambar (dipanggil dari app.py) ---
 def process_receipt_image(image_path):
